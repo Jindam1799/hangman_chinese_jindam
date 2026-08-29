@@ -69,7 +69,7 @@ const maxMistakes = 6;
 
 let itemMeaningCount = 3;
 let itemHintCount = 3;
-let isMeaningUsedThisStage = false; // 이번 스테이지 뜻 보기 사용 여부
+let isMeaningUsedThisStage = false;
 
 let score = 0;
 let sessionWords = [];
@@ -101,6 +101,52 @@ document.addEventListener(
   },
   { passive: false },
 );
+
+// --- 물리 키보드 이벤트 연결 ---
+document.addEventListener('keydown', (e) => {
+  // input 창(닉네임 입력 등)에 포커스가 있으면 단축키 무시
+  if (e.target.tagName === 'INPUT') return;
+
+  const key = e.key.toLowerCase();
+  const tonePopup = document.getElementById('tone-popup');
+
+  // 1. 성조 팝업이 열려있을 때: 숫자 1~5 입력 처리
+  if (!tonePopup.classList.contains('hidden')) {
+    if (['1', '2', '3', '4', '5'].includes(key)) {
+      const toneBtns = tonePopup.querySelectorAll('.tone-btn');
+      const index = parseInt(key) - 1;
+      // 해당 인덱스의 버튼이 존재하고 오답(disabled) 처리가 안 된 상태라면 클릭!
+      if (
+        toneBtns[index] &&
+        !toneBtns[index].classList.contains('disabled-tone')
+      ) {
+        toneBtns[index].click();
+      }
+    } else if (key === 'escape') {
+      tonePopup.classList.add('hidden');
+    }
+    return; // 성조 팝업 상태일 땐 다른 알파벳 키 무시
+  }
+
+  // 2. 게임 화면에서 a~z 입력 처리
+  if (/^[a-z]$/.test(key)) {
+    // 다른 모달(결과창, 복습창, 랭킹창)이나 로비 화면이 열려있으면 무시
+    if (
+      !document.getElementById('result-modal').classList.contains('hidden') ||
+      !document.getElementById('nickname-modal').classList.contains('hidden') ||
+      !document.getElementById('review-modal').classList.contains('hidden') ||
+      document.getElementById('game-screen').classList.contains('hidden')
+    ) {
+      return;
+    }
+
+    // 해당 알파벳의 가상 키보드 버튼을 찾아 클릭 이벤트 실행
+    const virtualBtn = document.getElementById(`key-${key}`);
+    if (virtualBtn) {
+      virtualBtn.click();
+    }
+  }
+});
 
 document.getElementById('view-ranking-btn').addEventListener('click', () => {
   updateRankingUI();
@@ -220,7 +266,7 @@ function loadNextWord() {
 
   guessedChars = [];
   mistakes = 0;
-  isMeaningUsedThisStage = false; // 스테이지가 바뀌면 뜻 보기 제한 초기화
+  isMeaningUsedThisStage = false;
   updateItemUI();
 
   if (currentMode === 'practice') {
@@ -264,7 +310,7 @@ function initKeyboard() {
     row.forEach((letter) => {
       const btn = document.createElement('div');
       btn.className = 'key';
-      btn.id = `key-${letter}`;
+      btn.id = `key-${letter}`; // id 부여 (물리 키보드 트리거용)
       btn.textContent = letter === 'v' ? 'ü' : letter;
       btn.addEventListener('click', () => handleKeyPress(letter, btn));
       rowEl.appendChild(btn);
@@ -292,10 +338,14 @@ function showTonePopup(vowelLetter, baseBtnEl) {
   optionsContainer.innerHTML = '';
 
   const tones = toneMap[vowelLetter];
-  tones.forEach((tonedChar) => {
+  tones.forEach((tonedChar, index) => {
     const btn = document.createElement('button');
     btn.className = 'tone-btn';
-    btn.textContent = tonedChar;
+
+    // <br> 대신 span으로 묶어 CSS Flexbox로 간격을 타이트하게 제어
+    btn.innerHTML = `<span style="line-height: 1;">${tonedChar}</span>
+                         <span style="font-size: 0.75rem; color: #95a5a6; line-height: 1;">${index + 1}</span>`;
+
     if (guessedChars.includes(tonedChar)) {
       btn.classList.add('disabled-tone');
     }
@@ -389,11 +439,16 @@ function showResultModal(isWin) {
   modal.classList.remove('hidden');
 }
 
+// --- 완벽한 여성 TTS 필터링 로직 ---
 function playTTS(text) {
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'zh-CN';
+
+    // 피치를 살짝 올려 여성스러운 톤으로 유도
+    utterance.pitch = 1.3;
+    utterance.rate = 0.95;
 
     const voices = window.speechSynthesis.getVoices();
     const zhVoices = voices.filter(
@@ -401,24 +456,54 @@ function playTTS(text) {
     );
 
     if (zhVoices.length > 0) {
+      // 남성 목소리 키워드 완벽 배제, 여성 목소리 키워드 매칭
       const femaleVoice = zhVoices.find((v) => {
         const name = v.name.toLowerCase();
+        if (
+          name.includes('male') ||
+          name.includes('boy') ||
+          name.includes('kangkang') ||
+          name.includes('jian') ||
+          name.includes('yunxi') ||
+          name.includes('yundong')
+        ) {
+          return false; // 남성 목소리 아웃
+        }
         return (
           name.includes('female') ||
           name.includes('woman') ||
+          name.includes('girl') ||
           name.includes('xiaoxiao') ||
           name.includes('yaoyao') ||
+          name.includes('tingting') ||
           name.includes('ting-ting') ||
-          name.includes('lili')
+          name.includes('lili') ||
+          name.includes('meijia') ||
+          name.includes('hua')
         );
       });
-      utterance.voice = femaleVoice || zhVoices[0];
+
+      // 명시적인 여성 이름이 안 찾아질 경우: 남성이 아닌 첫 번째 중국어 목소리
+      const fallbackVoice = zhVoices.find((v) => {
+        const name = v.name.toLowerCase();
+        return !(
+          name.includes('male') ||
+          name.includes('boy') ||
+          name.includes('kangkang') ||
+          name.includes('jian') ||
+          name.includes('yunxi')
+        );
+      });
+
+      utterance.voice = femaleVoice || fallbackVoice || zhVoices[0];
     }
     window.speechSynthesis.speak(utterance);
   } else {
     alert('이 브라우저에서는 음성 듣기를 지원하지 않습니다.');
   }
 }
+
+// 브라우저 보이스 비동기 로딩 이슈 해결용
 if ('speechSynthesis' in window) {
   window.speechSynthesis.getVoices();
 }
@@ -499,7 +584,6 @@ function updateItemUI() {
   document.getElementById('item-meaning-count').textContent = itemMeaningCount;
   document.getElementById('item-hint-count').textContent = itemHintCount;
 
-  // 남은 개수가 없거나, 이번 스테이지에서 이미 사용했으면 비활성화
   document.getElementById('item-meaning').disabled =
     itemMeaningCount <= 0 || isMeaningUsedThisStage;
   document.getElementById('item-hint').disabled = itemHintCount <= 0;
@@ -509,7 +593,7 @@ document.getElementById('item-meaning').addEventListener('click', () => {
   if (itemMeaningCount > 0 && !isMeaningUsedThisStage) {
     document.getElementById('meaning').classList.remove('hidden-meaning');
     itemMeaningCount--;
-    isMeaningUsedThisStage = true; // 현재 스테이지에서 사용 완료 처리
+    isMeaningUsedThisStage = true;
     updateItemUI();
   }
 });
