@@ -344,6 +344,11 @@ body {
   color: var(--accent-color);
   border-radius: 10px;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px; /* 글자와 숫자 사이 간격 축소 */
 }
 .disabled-tone {
   opacity: 0.4;
